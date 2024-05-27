@@ -6,6 +6,7 @@ document.addEventListener('DOMContentLoaded', function () {
         var resultsContainer = block.querySelector('.advanced-ajax-search-results');
         var searchOptions = JSON.parse(block.getAttribute('data-search-options'));
         var nonce = ajax_search_params.nonce;
+        var restUrl = ajax_search_params.rest_url;
 
         var debounceTimeout;
 
@@ -23,15 +24,25 @@ document.addEventListener('DOMContentLoaded', function () {
                 nonce: nonce
             };
 
-            var xhr = new XMLHttpRequest();
-            xhr.open('POST', ajax_search_params.ajax_url, true);
-            xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded; charset=UTF-8');
-            xhr.onreadystatechange = function () {
-                if (xhr.readyState === 4 && xhr.status === 200) {
-                    var response = JSON.parse(xhr.responseText);
-                    if (response.success && response.data) {
-                        resultsContainer.innerHTML = '';
-                        response.data.forEach(function (result) {
+            fetch(restUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-WP-Nonce': nonce
+                },
+                body: JSON.stringify(searchData)
+            })
+                .then(function (response) {
+                return response.json().then(function(data) {
+                    return { status: response.status, data: data };
+                });
+            })
+                .then(function (responseAndData) {
+                    var responseStatus = responseAndData.status;
+                    var data = responseAndData.data;
+                    resultsContainer.innerHTML = '';
+                    if (data.length && responseStatus===200) {
+                        data.forEach(function (result) {
                             var div = document.createElement('div');
                             div.className = 'search-result';
                             div.innerHTML = '<a href="' + result.link + '">' + result.title + '</a>';
@@ -40,9 +51,11 @@ document.addEventListener('DOMContentLoaded', function () {
                     } else {
                         resultsContainer.innerHTML = 'No results found.';
                     }
-                }
-            };
-            xhr.send('action=advanced_ajax_search&nonce=' + searchData.nonce + '&query=' + encodeURIComponent(searchData.query) + '&search_options=' + encodeURIComponent(JSON.stringify(searchData.search_options)));
+                })
+                .catch(function (error) {
+                    console.error('An error occurred while processing your request:', error);
+                    resultsContainer.innerHTML = 'An error occurred while processing your request.';
+                });
         }
     });
 });

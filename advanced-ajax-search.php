@@ -31,8 +31,8 @@ function advanced_ajax_search_enqueue_block_editor_assets()
         'advanced-ajax-search-block',
         'ajax_search_params',
         array(
-            'nonce' => wp_create_nonce('advanced-ajax-search-nonce'),
-            'ajax_url' => admin_url('admin-ajax.php')
+            'nonce' => wp_create_nonce('wp_rest'),
+            'rest_url' => esc_url_raw(rest_url('advanced-ajax-search/v1/search'))
         )
     );
 }
@@ -60,39 +60,40 @@ function advanced_ajax_search_enqueue_frontend_assets()
         'advanced-ajax-search-frontend',
         'ajax_search_params',
         array(
-            'nonce' => wp_create_nonce('advanced-ajax-search-nonce'),
-            'ajax_url' => admin_url('admin-ajax.php')
+            'nonce' => wp_create_nonce('wp_rest'),
+            'rest_url' => esc_url_raw(rest_url('advanced-ajax-search/v1/search'))
         )
     );
 }
 add_action('wp_enqueue_scripts', 'advanced_ajax_search_enqueue_frontend_assets');
 
-// AJAX handler
-add_action('wp_ajax_advanced_ajax_search', 'advanced_ajax_search_callback');
-add_action('wp_ajax_nopriv_advanced_ajax_search', 'advanced_ajax_search_callback');
+// Register REST API routes
+add_action('rest_api_init', function () {
+    register_rest_route('advanced-ajax-search/v1', '/search', array(
+        'methods' => 'POST',
+        'callback' => 'advanced_ajax_search_rest_callback',
+        'permission_callback' => '__return_true'
+    ));
+});
 
-function advanced_ajax_search_callback()
+function advanced_ajax_search_rest_callback(WP_REST_Request $request)
 {
-    // Check nonce for security
-    if (!check_ajax_referer('advanced-ajax-search-nonce', 'nonce', false)) {
-        wp_send_json_error('Invalid nonce.');
+    $nonce = $request->get_param('nonce');
+    if (!wp_verify_nonce($nonce, 'wp_rest')) {
+        return new WP_REST_Response('Invalid nonce', 403);
     }
 
-    // Validate and sanitize input
-    $query = isset($_POST['query']) ? sanitize_text_field($_POST['query']) : '';
+    $query = sanitize_text_field($request->get_param('query'));
+    $search_options = $request->get_param('search_options');
 
-    // If the query is empty, return an empty result array
     if (empty($query)) {
-        wp_send_json_success(array());
+        return new WP_REST_Response(array(), 200);
     }
-
-    $search_options = isset($_POST['search_options']) ? json_decode(stripslashes($_POST['search_options']), true) : null;
 
     if (is_null($search_options) || !is_array($search_options)) {
-        wp_send_json_error('Invalid search options format.');
+        return new WP_REST_Response('Invalid search options format', 400);
     }
 
-    // Fetch search results
     $search_results = array();
     if (!empty($search_options['posts'])) {
         $search_results = array_merge($search_results, fetch_search_results('any', $query));
@@ -106,13 +107,15 @@ function advanced_ajax_search_callback()
     if (!empty($search_options['products'])) {
         $search_results = array_merge($search_results, fetch_search_results('product', $query));
     }
+
     if (!empty($search_results)) {
-        wp_send_json_success($search_results);
+        return new WP_REST_Response($search_results, 200);
     } else {
-        wp_send_json_error('No results found.');
+        return new WP_REST_Response('No results found', 404);
     }
 }
 
+// Fetch search results function remains unchanged
 function fetch_search_results($post_type, $query)
 {
     $post__not_in = [];
@@ -128,44 +131,21 @@ function fetch_search_results($post_type, $query)
 
     return extract_search_results($query);
 }
-function get_all_product_ids()
-{
-    $product_ids = array();
-    $products = get_posts(
-        array(
-            'post_type' => 'product',
-            'posts_per_page' => -1, // Retrieve all products
-            'fields' => 'ids', // Only get post IDs
-        )
-    );
-    foreach ($products as $product_id) {
-        $product_ids[] = $product_id;
-    }
-    return $product_ids;
-}
 
-
+// Fetch taxonomy results function remains unchanged
 function fetch_taxonomy_results($query)
 {
-
     $results = [];
-    // Get all taxonomies
     $taxonomies = get_taxonomies(array(), 'objects');
 
-
-    // Loop through taxonomies
     foreach ($taxonomies as $taxonomy) {
-
-        // Get the terms associated with the current post for this taxonomy
         $terms = get_terms(array(
             'taxonomy' => $taxonomy->name,
             'name__like' => $query,
             'hide_empty' => false,
         ));
 
-        // Check if terms were found
         if ($terms && !is_wp_error($terms)) {
-            // Loop through terms and generate permalinks
             foreach ($terms as $term) {
                 $term_link = get_term_link($term);
                 $results[] = array(
@@ -178,6 +158,7 @@ function fetch_taxonomy_results($query)
     return $results;
 }
 
+// Extract search results function remains unchanged
 function extract_search_results($query)
 {
     $results = array();
@@ -193,4 +174,20 @@ function extract_search_results($query)
         wp_reset_postdata();
     }
     return $results;
+}
+
+function get_all_product_ids()
+{
+    $product_ids = array();
+    $products = get_posts(
+        array(
+            'post_type' => 'product',
+            'posts_per_page' => -1,
+            'fields' => 'ids',
+        )
+    );
+    foreach ($products as $product_id) {
+        $product_ids[] = $product_id;
+    }
+    return $product_ids;
 }
